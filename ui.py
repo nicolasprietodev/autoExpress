@@ -1,4 +1,5 @@
 import tkinter as tk
+import pandas as pd
 from tkinter import messagebox, filedialog, ttk
 from file_handler import load_files
 from data_analyzer import filter_data
@@ -29,64 +30,98 @@ class App:
             messagebox.showwarning("Advertencia", "No se seleccionaron archivos")
             return
         
-        self.data = load_files(files)
+        self.data_by_file = {}
         
+        for file in files:
+            df = pd.read_excel(file)
+            self.data_by_file[file] = df
         
         messagebox.showinfo("Info", "Archivos cargados correctamente")
         
     def select_columns(self):
-        if self.data is None:
+        if not self.data_by_file:
             messagebox.showwarning("Advertencia", "Carga datos primero.")
             return
-        
-        columns_window = tk.Toplevel(self.root)
-        columns_window.title("Seleccionar Columnas")
 
-        canvas = tk.Canvas(columns_window)
-        scrollbar = tk.Scrollbar(columns_window, orient="vertical", command=canvas.yview)
+        select_window = tk.Toplevel(self.root)
+        select_window.title("Seleccionar Columnas")
+
+        canvas = tk.Canvas(select_window)
+        scrollbar = tk.Scrollbar(select_window, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
-
-        frame = tk.Frame(canvas)
-        canvas.create_window((0, 0), window=frame, anchor="nw")
 
         scrollbar.pack(side="right", fill="y")
         canvas.pack(side="left", expand=True, fill="both")
 
-        columns = list(self.data.columns)
-        var = [tk.BooleanVar(value=False) for _ in columns]
+        self.selected_columns_by_file = {}
 
-        for i, col in enumerate(columns):
-            tk.Checkbutton(frame, text=col, variable=var[i]).pack(anchor="w")
+        for file, df in self.data_by_file.items():
+            frame = tk.LabelFrame(scrollable_frame, text=f"Campos en {file.split('/')[-1]}")
+            frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-        frame.update_idletasks()
+            columns = df.columns.tolist()
+            var_dict = {col: tk.BooleanVar() for col in columns}
+
+            for col, var in var_dict.items():
+                chk = tk.Checkbutton(frame, text=col, variable=var)
+                chk.pack(anchor="w")
+
+            self.selected_columns_by_file[file] = var_dict
+
+        button_frame = tk.Frame(select_window)
+        button_frame.pack(fill="x", pady=5)
+        
+        select_window.update_idletasks()  
         canvas.config(scrollregion=canvas.bbox("all"))
+        
+        tk.Button(button_frame, text="Aceptar", command=lambda: [self.display_selected_data(), select_window.destroy()]).pack(pady=5)
 
-        def save_selection():
-            self.selected_columns = [columns[i] for i in range(len(columns)) if var[i].get()]
-            columns_window.destroy()
-            self.display_data()
 
-        tk.Button(columns_window, text="Aceptar", command=save_selection).pack(pady=10)
-
-    def display_data(self):
-        if not self.selected_columns:
+    def display_selected_data(self):
+        if not self.selected_columns_by_file:
             messagebox.showwarning("Advertencia", "No seleccionaste columnas.")
             return
         
-        filtered_data = filter_data(self.data, self.selected_columns)
+        combined_data = []
+        
+        for file, columns in self.selected_columns_by_file.items():
+            df = self.data_by_file[file]
+            selected_cols = [col for col, var in columns.items() if var.get()]
+            if selected_cols:
+                filtered_df = df[selected_cols]
+                combined_data.append(filtered_df)
+        
+        if combined_data:
+            self.data = pd.concat(combined_data, ignore_index=True)
+            self.display_data()
+        else:
+            messagebox.showinfo("Info", "No se seleccionaron columnas para mostrar.")
+        
+    def display_data(self):
+        if self.data is None:
+            return
 
-        self.tree.delete(*self.tree.get_children())
-        self.tree["columns"] = self.selected_columns
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        columns = self.data.columns.tolist()
+        self.tree["columns"] = columns
         self.tree["show"] = "headings"
 
-        for col in self.selected_columns:
-            self.tree.heading(col, text=col)
+        for col in columns:
+            self.tree.heading(col, text=col, )
+            self.tree.column(col, width=150) 
 
-        for _, row in filtered_data.iterrows():
-            self.tree.insert("", "end", values=list(row))
-
-    
-    
+        for _, row in self.data.iterrows():
+            self.tree.insert("", "end", values=row.tolist())
+ 
     def run(self):
         self.root.mainloop()
 
